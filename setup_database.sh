@@ -1,17 +1,16 @@
-#!/bin/bash
-# Setup PostgreSQL databases and enable pgvector extension
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "Setting up PostgreSQL databases..."
+# Setup PostgreSQL qwen database and enable pgvector extension.
 
-# Note: Make sure PostgreSQL is running and you have proper credentials
+echo "Setting up PostgreSQL qwen database..."
 
-echo "Creating databases..."
-psql -U ${DB_USER:-postgres} -h ${DB_HOST:-localhost} -c "CREATE DATABASE siglip_embeddings;" 2>/dev/null || echo "Database siglip_embeddings may already exist"
-psql -U ${DB_USER:-postgres} -h ${DB_HOST:-localhost} -c "CREATE DATABASE qwen_embeddings;" 2>/dev/null || echo "Database qwen_embeddings may already exist"
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
+DB_USER="${DB_USER:-postgres}"
+DB_NAME_QWEN="${DB_NAME_QWEN:-qwen_embeddings}"
 
-echo "Enabling pgvector extension..."
-psql -U ${DB_USER:-postgres} -h ${DB_HOST:-localhost} -d siglip_embeddings -c "CREATE EXTENSION IF NOT EXISTS vector;"
-psql -U ${DB_USER:-postgres} -h ${DB_HOST:-localhost} -d qwen_embeddings -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d postgres -c "CREATE DATABASE \"${DB_NAME_QWEN}\";" 2>/dev/null || echo "Database ${DB_NAME_QWEN} may already exist"
+psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d "$DB_NAME_QWEN" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
-echo "✓ Database setup complete!"
-
+echo "✓ Qwen database setup complete"

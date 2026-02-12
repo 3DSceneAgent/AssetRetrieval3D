@@ -9,14 +9,17 @@ A simple multi-modal 3D asset retrieval system. This repo uses objaverse as a si
 
 ![Demo](./assets/asset_retrieval_demo.gif)
 
+## Project Status Update
+
+- Runtime/API path is now **Qwen-only** in this repo (**SigLIP deprecated**).
+- Backend supports startup-time DB bootstrap from OSS via `QWEN_DB_OSS_URL`.
+
 ## 1. Features
 > *Demo built upon objaverse, using Cap3D 650k+ english captions, 650k+  translated captions ,and 260k+ gobjaverse asset renderings*
 - **Text Search**: Retrieve 3D assets in English or Chinese
 - **Image Search**: Retrieve 3D assets using a single RGB image
 - **Cross-Modal Retrieval**: Retrieve 3D assets using text2image or image2text similarities
-- **Dual Algorithms**:
-  - **SigLip**: Fast, English-only, per-image embeddings. Medium Retrieval Quality(WIP).
-  - **Qwen3-VL-Embedding**: Bilingual, *multi-image* embeddings. High Retrieval Quality(Recommended).
+- **Qwen3-VL-Embedding**: Bilingual, *multi-image* embeddings. High Retrieval Quality.
 - **Vector Database**: PostgreSQL with pgvector for efficient similarity search
 - **Web Interface**: Beautiful Gradio UI with 3D model viewer
 - **REST API**: FastAPI backend for programmatic access
@@ -30,10 +33,6 @@ A simple multi-modal 3D asset retrieval system. This repo uses objaverse as a si
          │
          ├──► Translation ──► Chinese Captions
          │
-         ├──► SigLip Embeddings ──┐
-         │    - Text (EN)          │
-         │    - Images (per-view)  │
-         │                         │
          └──► Qwen Embeddings ─────┤
               - Text (EN + CN)     │
               - Images (multi)     │
@@ -59,7 +58,6 @@ A simple multi-modal 3D asset retrieval system. This repo uses objaverse as a si
 ### Prerequisites
 - Python 3.8+
 - PostgreSQL 12+ with pgvector extension
-- NVIDIA GPU (recommended for SigLip)
 - DashScope API key (for Qwen)
 ### Installation
 1. **Clone the repository** 
@@ -117,18 +115,6 @@ This creates `data/text_captions_cap3d_cn.json`.
 
 ### Step 2: Generate Embeddings
 
-#### (Optional) SigLip Embeddings
-
-```bash
-python scripts/02_embed_siglip.py
-```
-
-This generates:
-- Text embeddings (English only)
-- Image embeddings (one per viewpoint)
-
-#### (Optional) Qwen Embeddings
-
 ```bash
 python scripts/03_embed_qwen.py
 ```
@@ -146,7 +132,7 @@ python scripts/04_populate_database.py
 ```
 
 This:
-- Creates two databases: `siglip_embeddings` and `qwen_embeddings`
+- Creates database: `qwen_embeddings`
 - Creates tables with pgvector columns
 - Inserts all embeddings
 - Creates vector indexes
@@ -159,10 +145,10 @@ python backend/app.py
 
 Or with uvicorn:
 ```bash
-uvicorn backend.app:app --host 0.0.0.0 --port 8000
+uvicorn backend.app:app --host 0.0.0.0 --port 8002
 ```
 
-The API will be available at `http://localhost:8000`
+The API will be available at `http://localhost:8002`
 
 ### Step 5: Start Frontend
 
@@ -182,9 +168,6 @@ A comprehensive test client is provided to verify the backend service:
 # Run all tests with default settings
 python test_client.py
 
-# Test only SigLip algorithm
-python test_client.py --algorithm siglip
-
 # Test only image search
 python test_client.py --test-type image
 
@@ -192,7 +175,7 @@ python test_client.py --test-type image
 python test_client.py --verbose --num-tests 1
 
 # Test against remote backend
-python test_client.py --backend-url http://remote-server:8000
+python test_client.py --backend-url http://remote-server:8002
 ```
 
 The test client will:
@@ -215,15 +198,6 @@ The test client will:
 - **DEFAULT_TOP_K**: Default number of search results (default: 10)
 
 ## 6. Algorithms
-### Embedding Algoirthms
-| Feature | SigLip | Qwen |
-|---------|--------|------|
-| Text Languages | English only | English + Chinese |
-| Image Embeddings | One per viewpoint | Multi-image (8 views) |
-| Speed | Fast | Slower (API calls) |
-| Requires GPU | Yes (local) | No (API) |
-| Cross-modal | Yes | Yes |
-### Search Modes
 #### Inner-Modal Search
 - **Text → Text**: Find assets with similar descriptions
 - **Image → Image**: Find visually similar assets
@@ -259,7 +233,6 @@ objaverse_retrieval/
 │
 ├── scripts/                 # Processing scripts
 │   ├── 01_translate_captions.py
-│   ├── 02_embed_siglip.py
 │   ├── 03_embed_qwen.py
 │   └── 04_populate_database.py
 │
@@ -280,4 +253,3 @@ The code and application is licensed under [Apache2.0 License](LICENSE).
 * [objaverse_filter from kiui](https://github.com/ashawkey/objaverse_filter)
 * [gobjaverse](https://github.com/modelscope/richdreamer)
 * [Cap3D](https://github.com/crockwell/Cap3D/)
-

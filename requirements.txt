@@ -1,12 +1,9 @@
 dashscope
-openai 
+openai
 python-dotenv
-torch # required for sigclip
-transformers # required for sigclip
-huggingface-hub 
-ruff 
-pgvector 
-accelerate
+huggingface-hub
+ruff
+pgvector
 fastapi
 uvicorn[standard]
 gradio

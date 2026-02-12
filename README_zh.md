@@ -9,6 +9,11 @@
 
 ![Demo](./assets/asset_retrieval_demo.gif)
 
+## 项目状态更新
+
+- 当前仓库运行链路已调整为 **Qwen-only**(SigLIP已废弃）。
+- 后端支持通过 `QWEN_DB_OSS_URL` 在启动时从 OSS 自动恢复数据库。
+
 ## 1. 功能特性
 > *基于Cap3D提供的65w+英文标题，qwen翻译后的65w+中文标题，gobjaverse得到的数百万张图片渲染得到嵌入*
 - **文本搜索**：支持用英文或中文检索3D资产
