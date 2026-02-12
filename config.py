@@ -53,7 +53,7 @@ DB_CONNECTION_QWEN = (
 
 # Auto-bootstrap Qwen DB from OSS dump when DB is missing.
 QWEN_DB_AUTO_BOOTSTRAP = os.getenv("QWEN_DB_AUTO_BOOTSTRAP", "true").lower() == "true"
-QWEN_DB_OSS_URL = os.getenv("QWEN_DB_OSS_URL", "")
+QWEN_DB_OSS_URL = os.getenv("QWEN_DB_OSS_URL", "https://fishwowater.oss-cn-shenzhen.aliyuncs.com/qwen_embeddings_20260212_170200.dump.gz")
 QWEN_DB_DUMP_FORMAT = os.getenv("QWEN_DB_DUMP_FORMAT", "auto")  # auto|custom|plain
 QWEN_DB_DUMP_LOCAL_PATH = os.getenv("QWEN_DB_DUMP_LOCAL_PATH", "/tmp/qwen_embeddings.dump")
 QWEN_DB_DOWNLOAD_TIMEOUT_SECONDS = int(os.getenv("QWEN_DB_DOWNLOAD_TIMEOUT_SECONDS", "1800"))

@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 import psycopg2
 import requests
@@ -52,29 +53,94 @@ def _create_database(db_name: str) -> None:
         conn.close()
 
 
+def _drop_database(db_name: str) -> None:
+    conn = psycopg2.connect(_admin_conn_string())
+    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s
+                  AND pid <> pg_backend_pid()
+                """,
+                (db_name,),
+            )
+            cursor.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
+    finally:
+        conn.close()
+
+
 def _download_dump(url: str, target_path: Path, timeout_seconds: int) -> Path:
+    if target_path.exists() and target_path.is_dir():
+        raise RuntimeError(
+            f"QWEN_DB_DUMP_LOCAL_PATH points to a directory, expected a file path: {target_path}"
+        )
     target_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading qwen DB dump from OSS: %s", url)
 
     with requests.get(url, stream=True, timeout=timeout_seconds) as response:
         response.raise_for_status()
+        expected_size = int(response.headers.get("Content-Length", "0")) or None
         with open(target_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
 
+    if not target_path.exists():
+        raise RuntimeError(f"Download finished but target file is missing: {target_path}")
+
+    size = target_path.stat().st_size
+    if size <= 0:
+        raise RuntimeError(f"Downloaded file is empty: {target_path}")
+    if expected_size is not None and size != expected_size:
+        raise RuntimeError(
+            "Downloaded file size mismatch: "
+            f"expected {expected_size} bytes, got {size} bytes ({target_path})"
+        )
+
     logger.info("Downloaded dump to: %s", target_path)
     return target_path
 
 
+def _is_tar_archive(path: Path) -> bool:
+    try:
+        return tarfile.is_tarfile(path)
+    except OSError:
+        return False
+
+
+def _is_gzip_file(path: Path) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def _looks_like_tar_url(url: str) -> bool:
+    parsed = urlparse(url)
+    lower = parsed.path.lower()
+    return lower.endswith((".tar.gz", ".tgz", ".tar"))
+
+
 def _maybe_decompress(path: Path) -> Path:
-    if path.suffix != ".gz":
+    if not _is_gzip_file(path):
         return path
 
     decompressed = path.with_suffix("")
     logger.info("Decompressing %s -> %s", path, decompressed)
-    with gzip.open(path, "rb") as src, open(decompressed, "wb") as dst:
-        shutil.copyfileobj(src, dst)
+    try:
+        with gzip.open(path, "rb") as src, open(decompressed, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+    except (OSError, EOFError) as e:
+        if decompressed.exists():
+            decompressed.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Failed to decompress gzip file {path}: {e}. "
+            "The downloaded artifact may be truncated or corrupted."
+        ) from e
     return decompressed
 
 
@@ -175,8 +241,15 @@ def ensure_qwen_db_ready() -> None:
     db_name = config.DB_NAME_QWEN
 
     if _database_exists(db_name):
-        logger.info("Qwen database already exists: %s", db_name)
-        return
+        if _tables_exist():
+            logger.info("Qwen database already exists and required tables are present: %s", db_name)
+            return
+        logger.warning(
+            "Qwen database exists but required tables are missing. "
+            "Will recreate and restore from OSS: %s",
+            db_name,
+        )
+        _drop_database(db_name)
 
     if not config.QWEN_DB_OSS_URL:
         raise RuntimeError(
@@ -190,7 +263,8 @@ def ensure_qwen_db_ready() -> None:
         local_dump_path,
         config.QWEN_DB_DOWNLOAD_TIMEOUT_SECONDS,
     )
-    if str(downloaded).endswith((".tar.gz", ".tgz", ".tar")):
+
+    if _is_tar_archive(downloaded) or _looks_like_tar_url(config.QWEN_DB_OSS_URL):
         _restore_from_embeddings_archive(downloaded)
     else:
         restored_dump = _maybe_decompress(downloaded)
