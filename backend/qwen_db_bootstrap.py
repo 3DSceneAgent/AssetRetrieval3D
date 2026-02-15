@@ -72,34 +72,56 @@ def _drop_database(db_name: str) -> None:
         conn.close()
 
 
-def _download_dump(url: str, target_path: Path, timeout_seconds: int) -> Path:
+def _download_dump(
+    url: str,
+    target_path: Path,
+    timeout_seconds: int,
+    reuse_local: bool = True,
+) -> Path:
     if target_path.exists() and target_path.is_dir():
         raise RuntimeError(
             f"QWEN_DB_DUMP_LOCAL_PATH points to a directory, expected a file path: {target_path}"
         )
+    if reuse_local and target_path.exists():
+        size = target_path.stat().st_size
+        if size > 0:
+            logger.info("Using cached qwen DB dump: %s (%d bytes)", target_path, size)
+            return target_path
+        logger.warning("Cached qwen DB dump is empty. Re-downloading: %s", target_path)
+        target_path.unlink(missing_ok=True)
+
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target_path.parent / f"{target_path.name}.part"
+    temp_path.unlink(missing_ok=True)
     logger.info("Downloading qwen DB dump from OSS: %s", url)
 
-    with requests.get(url, stream=True, timeout=timeout_seconds) as response:
-        response.raise_for_status()
-        expected_size = int(response.headers.get("Content-Length", "0")) or None
-        with open(target_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
+    try:
+        with requests.get(url, stream=True, timeout=timeout_seconds) as response:
+            response.raise_for_status()
+            expected_size = int(response.headers.get("Content-Length", "0")) or None
+            with open(temp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
-    if not target_path.exists():
-        raise RuntimeError(f"Download finished but target file is missing: {target_path}")
+    if not temp_path.exists():
+        raise RuntimeError(f"Download finished but target file is missing: {temp_path}")
 
-    size = target_path.stat().st_size
+    size = temp_path.stat().st_size
     if size <= 0:
-        raise RuntimeError(f"Downloaded file is empty: {target_path}")
+        temp_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Downloaded file is empty: {temp_path}")
     if expected_size is not None and size != expected_size:
+        temp_path.unlink(missing_ok=True)
         raise RuntimeError(
             "Downloaded file size mismatch: "
-            f"expected {expected_size} bytes, got {size} bytes ({target_path})"
+            f"expected {expected_size} bytes, got {size} bytes ({temp_path})"
         )
 
+    temp_path.replace(target_path)
     logger.info("Downloaded dump to: %s", target_path)
     return target_path
 
@@ -262,6 +284,7 @@ def ensure_qwen_db_ready() -> None:
         config.QWEN_DB_OSS_URL,
         local_dump_path,
         config.QWEN_DB_DOWNLOAD_TIMEOUT_SECONDS,
+        reuse_local=config.QWEN_DB_REUSE_LOCAL_DUMP,
     )
 
     if _is_tar_archive(downloaded) or _looks_like_tar_url(config.QWEN_DB_OSS_URL):
