@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 
 logger = logging.getLogger(__name__)
+_TX_TIMEOUT_ERROR = 'unrecognized configuration parameter "transaction_timeout"'
 
 
 def _admin_conn_string() -> str:
@@ -93,7 +94,7 @@ def _download_dump(
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target_path.parent / f"{target_path.name}.part"
     temp_path.unlink(missing_ok=True)
-    logger.info("Downloading qwen DB dump from OSS: %s", url)
+    logger.info("Downloading qwen DB dump from remote URL: %s", url)
 
     try:
         with requests.get(url, stream=True, timeout=timeout_seconds) as response:
@@ -204,7 +205,108 @@ def _run_restore_command(db_name: str, dump_path: Path, fmt: str) -> None:
         ]
 
     logger.info("Restoring qwen DB from dump (%s)", fmt)
-    subprocess.run(cmd, env=env, check=True)
+    if fmt != "custom":
+        subprocess.run(cmd, env=env, check=True)
+        return
+
+    completed = subprocess.run(cmd, env=env, text=True, capture_output=True)
+    if completed.returncode == 0:
+        return
+
+    combined_error = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+    if _TX_TIMEOUT_ERROR in combined_error:
+        logger.warning(
+            "Direct pg_restore failed with transaction_timeout incompatibility. "
+            "Retrying via SQL stream filter for compatibility."
+        )
+        _run_custom_restore_with_compat_filter(base_args, dump_path, env)
+        return
+
+    raise subprocess.CalledProcessError(
+        completed.returncode,
+        cmd,
+        output=completed.stdout,
+        stderr=completed.stderr,
+    )
+
+
+def _run_custom_restore_with_compat_filter(
+    base_args: list[str],
+    dump_path: Path,
+    env: dict[str, str],
+) -> None:
+    restore_cmd = [
+        "pg_restore",
+        "--no-owner",
+        "--no-privileges",
+        str(dump_path),
+    ]
+    psql_cmd = [
+        "psql",
+        *base_args,
+        "-v", "ON_ERROR_STOP=1",
+    ]
+
+    skipped = 0
+    restore_proc = subprocess.Popen(
+        restore_cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    psql_proc = subprocess.Popen(
+        psql_cmd,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        assert restore_proc.stdout is not None
+        assert psql_proc.stdin is not None
+
+        for line in restore_proc.stdout:
+            if line.strip().startswith("SET transaction_timeout"):
+                skipped += 1
+                continue
+            psql_proc.stdin.write(line)
+
+        psql_proc.stdin.close()
+        restore_stderr = restore_proc.stderr.read() if restore_proc.stderr else ""
+        restore_rc = restore_proc.wait()
+        psql_stderr = psql_proc.stderr.read() if psql_proc.stderr else ""
+        psql_rc = psql_proc.wait()
+    finally:
+        if restore_proc.stdout:
+            restore_proc.stdout.close()
+        if restore_proc.stderr:
+            restore_proc.stderr.close()
+        if psql_proc.stdin and not psql_proc.stdin.closed:
+            psql_proc.stdin.close()
+        if psql_proc.stderr:
+            psql_proc.stderr.close()
+
+    if restore_rc != 0:
+        raise RuntimeError(
+            "pg_restore failed during compatibility fallback.\n"
+            f"Command: {' '.join(restore_cmd)}\n"
+            f"stderr: {restore_stderr.strip()}"
+        )
+
+    if psql_rc != 0:
+        raise RuntimeError(
+            "psql failed during compatibility fallback.\n"
+            f"Command: {' '.join(psql_cmd)}\n"
+            f"stderr: {psql_stderr.strip()}"
+        )
+
+    logger.info(
+        "Compatibility restore completed. Skipped %d incompatible transaction_timeout statements.",
+        skipped,
+    )
 
 
 def _restore_from_embeddings_archive(archive_path: Path) -> None:
